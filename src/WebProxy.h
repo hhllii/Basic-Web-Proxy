@@ -11,6 +11,7 @@
 #include<fstream>
 #include <netdb.h>
 #include<time.h>
+#include<sys/time.h>
 
 #include "simpleSocket.h" 
 #define LOG_FILE "access.log"

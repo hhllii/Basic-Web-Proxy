@@ -33,7 +33,9 @@ void writeLog(char* clientIP,const char* request, int code, int size){
 	char timestr[30];
 	lt=time(NULL);
 	timeptr=localtime(&lt);
-	strftime(timestr,100,"%Y-%m-%dT%X",timeptr);
+    struct timeval stimes;
+	gettimeofday(&stimes, NULL);
+    sprintf(timestr, "%d-%d-%dT%d:%d:%d.%dZ", timeptr->tm_year + 1900, timeptr->tm_mon + 1, timeptr->tm_mday, timeptr->tm_hour, timeptr->tm_min, timeptr->tm_sec, (int)(stimes.tv_usec/1000));
     string stime = timestr;
     string sclien = clientIP;
     string srequest = request;
@@ -72,7 +74,7 @@ void divCommand(string commandLine, vector<string> &command){
 
 void sendError(int sockclient, int code){
     char error[200];
-    sprintf(error, "HTTP/1.1 %d\r\n\r\n<html><head>\n<title>%d</title>\n</head></html>\n", code, code);
+    sprintf(error, "HTTP/1.1 %d\r\n\r\n<html><head>\n<title>%d</title>\n</head>\n<body>\n<h1>%d</h1>\n</body>\n</html>\n", code, code, code);
     if(send(sockclient, error, strlen(error), 0) < 0){
         printf("send message error: %s(errno: %d)\n", strerror(errno), errno);
     }
@@ -86,7 +88,7 @@ int forwardData(int sockclient, char* address, const char* recvData){
         printf("Create socket error: %s(errno: %d)\n",strerror(errno),errno);
         return -1;
     }
-    setTimeout(sockserver, 2, 2);
+    setTimeout(sockserver, 1, 1);
     struct sockaddr_in serv_addr; 
     memset(&serv_addr, '0', sizeof(serv_addr)); 
     serv_addr.sin_family = AF_INET; 
@@ -105,23 +107,46 @@ int forwardData(int sockclient, char* address, const char* recvData){
     } 
 
     printf("Sent request to host\n");
-    if(send(sockserver, recvData, strlen(recvData), 0) < 0){
+    // Forward Head
+    struct sockaddr_in peeraddr;
+    struct sockaddr_in localaddr;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    getpeername(sockclient, (struct sockaddr *)&peeraddr, &addrlen);
+    getsockname(sockclient, (struct sockaddr *)&localaddr, &addrlen);
+
+    char forwardHead[50];
+    sprintf(forwardHead, "Forwarded: for=<%s:%d>; proto=http; by=<%s:%d>\r\n", inet_ntoa(peeraddr.sin_addr), ntohs(peeraddr.sin_port), inet_ntoa(localaddr.sin_addr), ntohs(localaddr.sin_port));
+    //printf("%s\n",forwardHead);
+    char *sendHost = (char*)malloc(strlen(recvData) + strlen(forwardHead) + 1);
+    strcpy(sendHost, recvData);
+    sendHost[strlen(sendHost) - 3] = '\0';
+    strcat(sendHost, forwardHead);
+    strcat(sendHost, "\r\n");
+    printf("%s\n",sendHost);
+    if(send(sockserver, sendHost, strlen(sendHost), 0) < 0){
         printf("send message error: %s(errno: %d)\n", strerror(errno), errno);
         return -1;
     }
+    free(sendHost);
     char recv_buffer[BUFFER_SIZE];
+    char send_buffer[BUFFER_SIZE];
     while(true){
         memset(recv_buffer, 0, BUFFER_SIZE);
+        memset(send_buffer, 0, BUFFER_SIZE);
         int recv_size = (int)recv(sockserver, recv_buffer, BUFFER_SIZE, 0);
         if( recv_size >0 )
         {
             //send back to client
             dataSize += recv_size;
-            if(send(sockclient, recv_buffer, BUFFER_SIZE, 0) < 0){
+            strcpy(send_buffer, recv_buffer);
+            if(send(sockclient, send_buffer, BUFFER_SIZE, 0) < 0){
                 printf("send message error: %s(errno: %d)\n", strerror(errno), errno);
                 return -1;
             }
             //printf("%s", recv_buffer);
+            if(recv_size < BUFFER_SIZE){
+                break;
+            }
         }
         else{
             // Handle socket recv error or end
@@ -130,9 +155,13 @@ int forwardData(int sockclient, char* address, const char* recvData){
                 printf("\n Recv socket error %s(errno: %d)\n", strerror(errno),errno);
                 break;
             }
-            return dataSize;
+            printf("*End of the request.\n");
+            break;
         }
     }
+    close(sockserver);
+    close(sockclient);
+    return dataSize;
 }
 
 void *serverThread(void *arg){
@@ -154,15 +183,28 @@ void *serverThread(void *arg){
     recvData = getHTTPHEAD(sockclient);
     if(recvData.empty()){
         printf("HEAD invalid\n");
+        pthread_exit((void*)-1);
     }
 
     printf("*Received request:\n%s\n", recvData.c_str());
     // Get command line
     string commandLine, method, url, httpv;
     commandLine = getHTTPCommand(recvData);
+    if(commandLine.empty()){
+        sendError(sockclient, 400);
+        close(sockclient);
+        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+        pthread_exit((void*)-1);
+    }
     vector<string> commands; 
     divCommand(commandLine, commands);
     for(auto c:commands){
+        if(c.empty()){
+            sendError(sockclient, 400);
+            close(sockclient);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+            pthread_exit((void*)-1);
+        }
         printf("*Each Command: %s\n", c.c_str());
     }
     method = commands[0];
@@ -170,14 +212,23 @@ void *serverThread(void *arg){
         printf("Invalid request error\n");
         //Invalid request error return
         // 405
-        sendError(sockclient, 405);
+        sendError(sockclient, 501);
         close(sockclient);
-        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 405, 0);
+        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 501, 0);
         pthread_exit((void*)-1);
     }
     int url_start = commands[1].find("//", 0);
     int url_end = commands[1].find("/", url_start + 2);
-    url = commands[1].substr(url_start + 2, url_end - url_start - 2); // *bug '/' fixed!
+    if(url_start == -1){
+        sendError(sockclient, 400);
+        close(sockclient);
+        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+        pthread_exit((void*)-1);
+    }
+    if(url_end == -1){
+        url_end = commands[1].size();
+    }
+    url = commands[1].substr(url_start + 2, url_end - url_start - 2);
     while(url.back() == '/'){
         url.pop_back();
     }
@@ -277,7 +328,6 @@ int main(int argc, char const *argv[]) {
                 return -1;
             }
             
-            printf("*End of the request.\n");
         }
     }
     return 0;

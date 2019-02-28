@@ -124,7 +124,10 @@ string getHTTPHEAD(int sockfd){
 
 string getHTTPCommand(string header){
     int command_size = header.find("\r\n", 0);
-    return header.substr(0, command_size);
+    if(command_size > 0){
+        return header.substr(0, command_size);
+    }
+    return "";
 }
 
 int getHostaddress(const char* url, char* raddress){
