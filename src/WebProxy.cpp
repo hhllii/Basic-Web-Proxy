@@ -58,7 +58,7 @@ void writeLog(char* clientIP,const char* request, int code, int size){
 
 }
 
-void divCommand(string commandLine, vector<string> &command){
+int divCommand(string commandLine, vector<string> &command){
     int command_pos = 0;
     for(int i = 0; i < 3; ++i){
         int command_size = commandLine.find(" ", command_pos);
@@ -69,7 +69,11 @@ void divCommand(string commandLine, vector<string> &command){
         command.push_back(commandLine.substr(command_pos, command_size));
         command_pos += command_size + 1;
         // printf("*Each Command: %s\n", command[i].c_str());
+        if(command[i].empty()){
+            return -1;
+        }
     }
+    return 0;
 }
 
 void sendError(int sockclient, int code){
@@ -176,6 +180,9 @@ void *serverThread(void *arg){
     {
         // printf( "client IP：%s ", inet_ntoa(Addclient.sin_addr));
         // printf( "client PORT：%d ", ntohs(Addclient.sin_port));
+    }else{
+        printf("Socket invalid\n");
+
     }
 
     //handleRequest();
@@ -197,14 +204,12 @@ void *serverThread(void *arg){
             continue;
         }
         vector<string> commands; 
-        divCommand(commandLine, commands);
+        if(divCommand(commandLine, commands) < 0){
+            sendError(sockclient, 400);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+            continue;
+        }
         for(auto c:commands){
-            if(c.empty()){
-                sendError(sockclient, 400);
-                close(sockclient);
-                writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
-                pthread_exit((void*)-1);
-            }
             printf("*Each Command: %s\n", c.c_str());
         }
         method = commands[0];
@@ -233,13 +238,6 @@ void *serverThread(void *arg){
         httpv = commands[2];
         // Host address
         char address[INET_ADDRSTRLEN];
-        if(banCheck(url.c_str()) == 1){
-            printf("Forbidden site\n");
-            //403
-            sendError(sockclient, 403);
-            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 403, 0);
-            continue;
-        }
 
         if(httpv != "HTTP/1.1" && httpv != "HTTP/1.0" &&httpv != "HTTP/0.9"){
             printf("Invalid HTTP version error\n");
@@ -257,7 +255,13 @@ void *serverThread(void *arg){
             continue;
         }
         printf("Address: %s\n", address);
-
+        if(banCheck(url.c_str()) == 1){
+            printf("Forbidden site\n");
+            //403
+            sendError(sockclient, 403);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 403, 0);
+            continue;
+        }
         // Forward data from host to client
         int dataSize;
         if((dataSize = forwardData(sockclient, address, recvData.c_str())) < 0){
@@ -265,6 +269,9 @@ void *serverThread(void *arg){
             break;
         }
         writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 200, dataSize);
+        if(httpv != "HTTP/1.1"){
+            break;
+        }
     }
     printf("End of socket: %d\n", sockclient);
     close(sockclient);
