@@ -88,7 +88,7 @@ int forwardData(int sockclient, char* address, const char* recvData){
         printf("Create socket error: %s(errno: %d)\n",strerror(errno),errno);
         return -1;
     }
-    setTimeout(sockserver, 1, 1);
+    setTimeout(sockserver, 30, 30);
     struct sockaddr_in serv_addr; 
     memset(&serv_addr, '0', sizeof(serv_addr)); 
     serv_addr.sin_family = AF_INET; 
@@ -115,11 +115,11 @@ int forwardData(int sockclient, char* address, const char* recvData){
     getsockname(sockclient, (struct sockaddr *)&localaddr, &addrlen);
 
     char forwardHead[50];
-    sprintf(forwardHead, "Forwarded: for=<%s:%d>; proto=http; by=<%s:%d>\r\n", inet_ntoa(peeraddr.sin_addr), ntohs(peeraddr.sin_port), inet_ntoa(localaddr.sin_addr), ntohs(localaddr.sin_port));
+    sprintf(forwardHead, "Forwarded:for=%s:%d;proto=http;by=%s:%d\r\n", inet_ntoa(peeraddr.sin_addr), ntohs(peeraddr.sin_port), inet_ntoa(localaddr.sin_addr), ntohs(localaddr.sin_port));
     //printf("%s\n",forwardHead);
     char *sendHost = (char*)malloc(strlen(recvData) + strlen(forwardHead) + 1);
     strcpy(sendHost, recvData);
-    sendHost[strlen(sendHost) - 3] = '\0';
+    sendHost[strlen(recvData) - 2] = '\0';
     strcat(sendHost, forwardHead);
     strcat(sendHost, "\r\n");
     printf("%s\n",sendHost);
@@ -160,7 +160,6 @@ int forwardData(int sockclient, char* address, const char* recvData){
         }
     }
     close(sockserver);
-    close(sockclient);
     return dataSize;
 }
 
@@ -168,8 +167,8 @@ void *serverThread(void *arg){
     struct ThreadAttri *temp;
     temp = (struct ThreadAttri *)arg;
     int sockclient = temp->sockclient;
-    setTimeout(sockclient, 2, 2);
-    string recvData;
+    setTimeout(sockclient, 20, 20);
+    string recvData, recvTemp;
 
     struct sockaddr_in Addclient;
     socklen_t addrlen = sizeof(struct sockaddr_in);
@@ -180,97 +179,96 @@ void *serverThread(void *arg){
     }
 
     //handleRequest();
-    recvData = getHTTPHEAD(sockclient);
-    if(recvData.empty()){
-        printf("HEAD invalid\n");
-        pthread_exit((void*)-1);
-    }
-
-    printf("*Received request:\n%s\n", recvData.c_str());
-    // Get command line
-    string commandLine, method, url, httpv;
-    commandLine = getHTTPCommand(recvData);
-    if(commandLine.empty()){
-        sendError(sockclient, 400);
-        close(sockclient);
-        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
-        pthread_exit((void*)-1);
-    }
-    vector<string> commands; 
-    divCommand(commandLine, commands);
-    for(auto c:commands){
-        if(c.empty()){
-            sendError(sockclient, 400);
-            close(sockclient);
-            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
-            pthread_exit((void*)-1);
+    while(getHTTPHEAD(sockclient, recvTemp) > 0){
+        recvData = recvTemp;
+        recvTemp = "";
+        if(recvData.empty()){
+            printf("HEAD invalid\n");
+            continue;
         }
-        printf("*Each Command: %s\n", c.c_str());
-    }
-    method = commands[0];
-    if(method != "GET" && method != "HEAD"){
-        printf("Invalid request error\n");
-        //Invalid request error return
-        // 405
-        sendError(sockclient, 501);
-        close(sockclient);
-        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 501, 0);
-        pthread_exit((void*)-1);
-    }
-    int url_start = commands[1].find("//", 0);
-    int url_end = commands[1].find("/", url_start + 2);
-    if(url_start == -1){
-        sendError(sockclient, 400);
-        close(sockclient);
-        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
-        pthread_exit((void*)-1);
-    }
-    if(url_end == -1){
-        url_end = commands[1].size();
-    }
-    url = commands[1].substr(url_start + 2, url_end - url_start - 2);
-    while(url.back() == '/'){
-        url.pop_back();
-    }
-    httpv = commands[2];
-    // Host address
-    char address[INET_ADDRSTRLEN];
-    if(banCheck(url.c_str()) == 1){
-        printf("Forbidden site\n");
-        //403
-        sendError(sockclient, 403);
-        close(sockclient);
-        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 403, 0);
-        pthread_exit((void*)1);
-    }
 
-    if(httpv != "HTTP/1.1" && httpv != "HTTP/1.0" &&httpv != "HTTP/0.9"){
-        printf("Invalid HTTP version error\n");
-        //TODO 400
-        sendError(sockclient, 400);
-        close(sockclient);
-        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
-        pthread_exit((void*)-1);
-    }
-    if(getHostaddress(url.c_str(), address) < 0){
-        printf("Invalid address error\n");
-        //Invalid address error return
-        //TODO 400
-        sendError(sockclient, 400);
-        close(sockclient);
-        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
-        pthread_exit((void*)-1);
-    }
-    printf("Address: %s\n", address);
+        printf("*Received request:\n%s\n", recvData.c_str());
+        // Get command line
+        string commandLine, method, url, httpv;
+        commandLine = getHTTPCommand(recvData);
+        if(commandLine.empty()){
+            sendError(sockclient, 400);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+            continue;
+        }
+        vector<string> commands; 
+        divCommand(commandLine, commands);
+        for(auto c:commands){
+            if(c.empty()){
+                sendError(sockclient, 400);
+                close(sockclient);
+                writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+                pthread_exit((void*)-1);
+            }
+            printf("*Each Command: %s\n", c.c_str());
+        }
+        method = commands[0];
+        if(method != "GET" && method != "HEAD"){
+            printf("Invalid request error\n");
+            //Invalid request error return
+            // 405
+            sendError(sockclient, 501);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 501, 0);
+            continue;
+        }
+        int url_start = commands[1].find("//", 0);
+        int url_end = commands[1].find("/", url_start + 2);
+        if(url_start == -1){
+            sendError(sockclient, 400);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+            continue;
+        }
+        if(url_end == -1){
+            url_end = commands[1].size();
+        }
+        url = commands[1].substr(url_start + 2, url_end - url_start - 2);
+        while(url.back() == '/'){
+            url.pop_back();
+        }
+        httpv = commands[2];
+        // Host address
+        char address[INET_ADDRSTRLEN];
+        if(banCheck(url.c_str()) == 1){
+            printf("Forbidden site\n");
+            //403
+            sendError(sockclient, 403);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 403, 0);
+            continue;
+        }
 
-    // Forward data from host to client
-    int dataSize;
-    if((dataSize = forwardData(sockclient, address, recvData.c_str())) < 0){
-        printf("Failed forward data\n");
-        pthread_exit((void*)-1);
+        if(httpv != "HTTP/1.1" && httpv != "HTTP/1.0" &&httpv != "HTTP/0.9"){
+            printf("Invalid HTTP version error\n");
+            //TODO 400
+            sendError(sockclient, 400);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+            continue;
+        }
+        if(getHostaddress(url.c_str(), address) < 0){
+            printf("Invalid address error\n");
+            //Invalid address error return
+            //TODO 400
+            sendError(sockclient, 400);
+            writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 400, 0);
+            continue;
+        }
+        printf("Address: %s\n", address);
+
+        // Forward data from host to client
+        int dataSize;
+        if((dataSize = forwardData(sockclient, address, recvData.c_str())) < 0){
+            printf("Failed forward data\n");
+            break;
+        }
+        writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 200, dataSize);
     }
-    writeLog(inet_ntoa(Addclient.sin_addr), commandLine.c_str(), 200, dataSize);
-    pthread_exit((void*)1);
+    printf("End of socket: %d\n", sockclient);
+    close(sockclient);
+    pthread_exit((void*)-1);
 }
 
 int main(int argc, char const *argv[]) {

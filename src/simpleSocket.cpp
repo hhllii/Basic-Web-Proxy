@@ -95,13 +95,13 @@ void filecat(FILE* fp1, FILE* fp2){
 	}
 }
 
-string getHTTPHEAD(int sockfd){
+int getHTTPHEAD(int sockfd, string &head){
     char buffer[1] = {0};
-    string head;
     int cnt = 0;
+    int recv_size;
     // Find the end of head with \r\n\r\n
     while(true){
-        if((int)recv(sockfd, buffer, 1, 0)){
+        if((recv_size = recv(sockfd, buffer, 1, 0)) > 0){
             head.push_back(buffer[0]);
             if(buffer[0] == '\r' || buffer[0] == '\n' ){
                 ++cnt;
@@ -115,11 +115,16 @@ string getHTTPHEAD(int sockfd){
                 break;
             }
         }else{
-            printf("Recv socket error: %s(errno: %d)\n",strerror(errno),errno);
-            return "";
+            if((recv_size<0) &&(recv_size == EAGAIN||recv_size == EWOULDBLOCK||recv_size == EINTR)){ //error code, connection doesn't fail continue
+                printf("Recv header error: %s(errno: %d)\n",strerror(errno),errno);
+                return -1;
+            }
+            // End of connection no header
+            return 0;
         }
     }
-    return head;
+    // Got head
+    return 1;
 }
 
 string getHTTPCommand(string header){

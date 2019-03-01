@@ -61,7 +61,7 @@ int getFileSize(FILE* fp); //largest 2G file for int //!!!***careful the fp will
 
 void filecat(FILE* fp1, FILE* fp2); // 1 byte copy
 
-string getHTTPHEAD(int sockfd); // get http head
+int getHTTPHEAD(int sockfd, string &head); // get http head
 
 string getHTTPCommand(string header); //get http command
 
