@@ -32,3 +32,6 @@ example:
 3.	Threads are not joined.
 4.	Do not handle the client send multiple request at once.
 5.	The error message send to client not contains all information in header just error code and a simple html code.
+6.	Set time out for host and client. The server socket might be closed and create a new one as the client send new request by the keep alive.
+7.	Didn’t check for some kinds of invalid header.
+8.	Might keep-alive for error stage which is not HTTP/1.1.
